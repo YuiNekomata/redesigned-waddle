@@ -75,6 +75,76 @@ const coverageKeywords=[...new Set([...Object.values(profiles).flat(),
  'SLA_ThongCString','SLA_ThongLowleg','SLA_ThongT','SLA_PantsNormal','SLA_FullSkirt','SLA_ShowgirlSkirt',
  'SLA_ArmorPretty','SLA_ArmorCurtain','SLA_ArmorLewdLeotard'])].sort();
 const deviceKeywords=[...new Set(Object.values(deviceProfiles).flat())].sort();
+// Descriptions explain classification intent; consuming mods decide the gameplay effect.
+const keywordDescriptions={
+ EroticArmor:'Marks an outfit as erotic / revealing for mods that check EroticArmor, including BaboDialogue.',
+ AND_CoversAll:'Full-coverage outfit classification for Advanced Nudity Detection.',
+ AND_NearlyNaked:'Nearly naked outfit classification for Advanced Nudity Detection.',
+ SLA_ArmorHalfNaked:'Half-naked / revealing outfit classification. Distinct from EroticArmor.',
+ SLA_ArmorHalfNakedBikini:'Bikini-style half-naked outfit classification.',
+ SLA_ArmorPartTop:'Separate upper armor piece; does not by itself specify how much skin is exposed.',
+ SLA_ArmorPartBottom:'Separate lower armor piece; does not by itself specify how much skin is exposed.',
+ SLA_ArmorTransparent:'Transparent / see-through armor classification.',
+ SLA_ArmorPretty:'Pretty outfit classification used by compatible mods.',
+ SLA_ArmorCurtain:'Curtain-style armor classification used by compatible mods.',
+ SLA_ArmorLewdLeotard:'Lewd leotard classification used by compatible mods.',
+ SLA_ShowgirlSkirt:'Showgirl-style skirt classification.',
+ SLA_Brabikini:'Bra / bikini top classification.',
+ SLA_BootsHeels:'High-heeled footwear classification.',
+ SLA_PastiesNipple:'Nipple pasties classification.',
+ SLA_PastiesCrotch:'Crotch pasties classification.',
+ SLA_ThongCString:'C-string underwear classification.',
+ SLA_ThongGstring:'G-string underwear classification.',
+ SLA_ThongLowleg:'Low-leg thong classification.',
+ SLA_ThongT:'T-style thong classification.',
+ SLA_PantiesNormal:'Regular panties classification.',
+ SLA_PantsNormal:'Regular pants classification.',
+ SLA_FullSkirt:'Full skirt classification.',
+ SLA_MiniSkirt:'Mini skirt classification.',
+ SLA_MicroSkirt:'Micro skirt classification.',
+ SLA_MicroHotpants:'Very short hotpants classification.'
+};
+Object.assign(keywordDescriptions,{
+ AND_CoversAll:'Treat the outfit as fully covering the body for AND. Use for an outfit that conceals the chest, buttocks and genitals; not merely a small top or accessory.',
+ AND_NearlyNaked:'An outfit with very little effective coverage. This is a whole-outfit classification, not a precise percentage of exposed skin.',
+ AND_ArmorTop:'Upper armor piece providing chest coverage. Does not mean the entire body is covered; classify a matching bottom separately.',
+ AND_ArmorBottom:'Lower armor piece providing lower-body coverage. Does not mean the chest is covered; classify a matching top separately.',
+ AND_Bra:'Bra covering the breasts / nipples while leaving much of the torso uncovered. For transparent or non-covering designs, use the corresponding variant.',
+ AND_Underwear:'Underwear covering the intimate lower-body area. Not a whole-outfit coverage rating; transparent and non-covering variants are separate.',
+ AND_Thong:'Minimal underwear with little buttock coverage. The normal variant still represents coverage; use NoCover when the relevant area remains exposed.',
+ AND_NipplePasties:'Small patches covering the nipples, leaving most of the breasts and torso exposed.',
+ AND_VaginaPasties:'Small patch covering the genital area, leaving most of the pelvis and buttocks exposed.',
+ AND_Miniskirt:'Short skirt with limited leg coverage. Movement can matter to exposure; this tag does not specify an exact hem length.',
+ AND_Microskirt:'Extremely short skirt with less coverage than a miniskirt. Review the actual mesh and any underwear; no exact length is specified here.',
+ AND_Hotpants:'Very short shorts leaving most of the legs uncovered. Check the actual mesh for coverage of the buttocks and genital area.',
+ SLA_ArmorPartTop:'Separate upper piece. Describes which part of the outfit it is, not whether nipples are covered or how much skin shows.',
+ SLA_ArmorPartBottom:'Separate lower piece. Describes which part of the outfit it is, not whether buttocks or genitals are covered.',
+ SLA_ArmorTransparent:'See-through armor: the fabric may be present while the body beneath remains visible. Not the same as an opaque piece with cutouts.',
+ SLA_Brabikini:'Bra / bikini top: limited torso coverage, normally covering the breasts. Judge nipple coverage from the actual item.',
+ SLA_PastiesNipple:'Nipple patches: nipples covered, most of the breasts and torso exposed.',
+ SLA_PastiesCrotch:'Small crotch covering: most of the surrounding pelvis and buttocks remain exposed.',
+ SLA_PantiesNormal:'Regular panties. Lower-body underwear classification; the keyword does not specify an exact coverage percentage.',
+ SLA_PantsNormal:'Regular pants. Lower-body garment classification, rather than a revealing-outfit rating.',
+ SLA_ThongGstring:'G-string style underwear with a very narrow rear strap and little buttock coverage.',
+ SLA_ThongCString:'C-string style minimal underwear without a conventional waistband. Check the mesh for actual front coverage.',
+ SLA_ThongLowleg:'Low-leg thong style. Minimal rear coverage; the exact cut and front coverage depend on the item.',
+ SLA_ThongT:'T-style thong. Minimal rear coverage; this is a style label, not a measured nudity level.',
+ SLA_MicroHotpants:'Extremely short shorts with limited thigh / buttock coverage. Inspect the mesh; the tag does not establish genital exposure.'
+});
+const andPieces={ArmorTop:'Upper armor piece',ArmorBottom:'Lower armor piece',Bra:'Bra',Underwear:'Underwear',Thong:'Thong',NipplePasties:'Nipple pasties',VaginaPasties:'Crotch pasties',Miniskirt:'Mini skirt',Microskirt:'Micro skirt',Hotpants:'Hotpants'};
+for(const keyword of coverageKeywords){
+ if(keywordDescriptions[keyword])continue;
+ if(keyword.startsWith('AND_')){
+  let piece=keyword.slice(4),qualifier='';
+  if(piece.endsWith('_NoCover')){piece=piece.slice(0,-8);qualifier='; does not provide coverage for nudity detection: the relevant intimate area remains exposed despite the garment being worn';}
+  else if(piece.endsWith('T')){piece=piece.slice(0,-1);qualifier='; see-through material can reveal the body beneath, with exposure / flashing affected by AND settings';}
+  keywordDescriptions[keyword]=(andPieces[piece]||piece)+' classification for Advanced Nudity Detection'+qualifier+'.';
+ }
+}
+for(const keyword of deviceKeywords){
+ const labels=Object.entries(deviceProfiles).filter(([,tags])=>tags.includes(keyword)&&tags[tags.length-1]===keyword).map(([label])=>label);
+ keywordDescriptions[keyword]=(labels[0]||keyword.replace('zad_Devious','').replace(/([a-z])([A-Z])/g,'$1 $2'))+' device classification. Keyword only: does not add locks, scripts, restraints or a working Devious Device.';
+}
 function slotCategories(row){
  const categories=new Set(),name=(row.name+' '+(row.editor||'')).replace(/([a-z])([A-Z])/g,'$1 $2').toLowerCase();
  const map={30:['head'],31:['head'],32:['upper','body','torso'],33:['hands'],34:['wrists'],35:['neck'],37:['feet'],38:['legs'],41:['head'],42:[/choker|collar/.test(name)?'neck':'head'],43:['ears'],44:['mouth'],45:['neck'],46:['restraint'],48:['upper','anal'],49:['lower'],50:['genitalAdornment'],51:['nippleAdornment'],52:['lower'],53:['legs'],54:['vaginal'],55:['eyes'],56:['upper'],57:['lower'],58:['torso'],59:['wrists'],60:['head']};
@@ -253,7 +323,7 @@ async function readZip(buffer,includeAssets=false){
   const n=v.getUint16(p+28,true),extra=v.getUint16(p+30,true),comment=v.getUint16(p+32,true),disk=v.getUint16(p+34,true),local=v.getUint32(p+42,true);
   if(p+46+n+extra+comment>offset+size)throw Error('Truncated ZIP filename.');
   const path=new TextDecoder('utf-8').decode(bytes.subarray(p+46,p+46+n));p+=46+n+extra+comment;
-  if(!(includeAssets?/\.(esp|esm|esl|nif|dds)$/i:/\.(esp|esm|esl)$/i).test(path))continue;
+  if(!(includeAssets?/\.(esp|esm|esl|nif|dds|osp)$/i:/\.(esp|esm|esl)$/i).test(path))continue;
   if(disk||local===0xffffffff||compressed===0xffffffff||uncompressed===0xffffffff)throw Error('ZIP64 or split plugin entry is not supported.');
   if(flags&1)throw Error('Password-protected plugin entries are not supported.');
   if(method!==0&&method!==8)throw Error('ZIP compression method '+method+' is not supported. Use a standard ZIP.');
@@ -275,5 +345,5 @@ async function readZip(buffer,includeAssets=false){
  }
  return result;
 }
-root.KID={profiles,deviceProfiles,coverageKeywords,deviceKeywords,slotCategories,keywordRelevant,setKeyword,setCoverageProfile,setDeviceProfile,suggest,suggestSlots,applySlotSuggestions,parse,generate,zipFile,readZip};
+root.KID={keywordDescriptions,profiles,deviceProfiles,coverageKeywords,deviceKeywords,slotCategories,keywordRelevant,setKeyword,setCoverageProfile,setDeviceProfile,suggest,suggestSlots,applySlotSuggestions,parse,generate,zipFile,readZip};
 })(typeof module!=='undefined'?module.exports:globalThis);

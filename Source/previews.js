@@ -79,6 +79,7 @@ function parseNif(buffer){
  for(const s of shapes){s.verts=s.verts.slice();if(s.skin<0){const chain=[s.transform];let p=parents.get(s.id),seen=new Set();while(nodes.has(p)&&!seen.has(p)){seen.add(p);chain.push(nodes.get(p));p=parents.get(p);}for(let i=0;i<s.verts.length;i+=5){let v=Array.from(s.verts.subarray(i,i+3));for(const t of chain)v=transformPoint(...v,t);s.verts.set(v,i);}}
   for(const index of s.indices)if(index>=s.verts.length/5)throw Error('Triangle references a missing vertex');
   s.body=/(^|[^a-z])(3ba|3bbb|cbbe|bhunp|uunp|body|basebody|femalebody|hands|feet)([^a-z]|$)/i.test(s.name)||/textures[\\/]actors[\\/]character/i.test(s.texture);
+  s.helper=/^virtual[ _]?/i.test(s.name);
  }
  if(!shapes.length)throw Error('No supported triangle geometry found'+(warnings.length?': '+warnings[0]:''));
  return {shapes,warnings};
@@ -89,9 +90,50 @@ function findAsset(files,path,prefix='meshes'){
  const matches=files.filter(f=>{const n=norm(f.path||f.webkitRelativePath||f.name);return n===target||n===prefix+'/'+target||n.endsWith('/'+prefix+'/'+target);});
  if(matches.length>1)throw Error('Multiple copies of '+path+'; choose the installed mod folder.');return matches[0];
 }
+const bodySlideCache=new WeakMap();
+const meshKey=path=>norm(path).replace(/^meshes\//,'');
+async function bodySlideIndex(files){
+ if(!bodySlideCache.has(files))bodySlideCache.set(files,(async()=>{
+  const index=new Map();
+  for(const file of files.filter(f=>/\.osp$/i.test(f.name))){
+   const buffer=await file.arrayBuffer();if(buffer.byteLength>16*1024*1024)continue;
+   const xml=new TextDecoder().decode(buffer);if(/<!DOCTYPE|<!ENTITY/i.test(xml))continue;
+   const doc=new DOMParser().parseFromString(xml,'application/xml');if(doc.querySelector('parsererror'))continue;
+   for(const project of doc.querySelectorAll('SliderSet')){
+    const field=tag=>Array.from(project.children).find(e=>e.tagName===tag);
+    const folder=field('DataFolder')?.textContent.trim(),source=field('SourceFile')?.textContent.trim(),outputPath=field('OutputPath')?.textContent.trim(),output=field('OutputFile');
+    if(!folder||!source||!outputPath||!output?.textContent.trim())continue;
+    const sourcePath=folder+'/'+source,sourceFile=findAsset(files,sourcePath,'calientetools/bodyslide/shapedata');if(!sourceFile)continue;
+    const bodyNames=new Set();for(const shape of Array.from(project.children).filter(e=>e.tagName==='Shape')){
+     const dataFolder=shape.getAttribute('DataFolder');if(dataFolder&&norm(dataFolder)!==norm(folder)){bodyNames.add(shape.getAttribute('target')||'');bodyNames.add(shape.textContent.trim());}
+    }
+    const stem=meshKey(outputPath.replace(/[\\/]+$/,'')+'/'+output.textContent.trim().replace(/\.nif$/i,''));
+    const keys=[stem+'.nif'];if(output.getAttribute('GenWeights')!=='false')keys.push(stem+'_0.nif',stem+'_1.nif');
+    for(const key of keys){if(!index.has(key))index.set(key,[]);index.get(key).push({file:sourceFile,sourcePath,bodyNames,project:project.getAttribute('name')||source});}
+   }
+  }
+  return index;
+ })());
+ return bodySlideCache.get(files);
+}
 async function modelFor(row,files){
- for(const m of row.previewModels||[]){const file=findAsset(files,m.path);if(file)return {...parseNif(await file.arrayBuffer()),kind:m.kind,path:m.path};}
- throw Error('Model not included. Load the full mod ZIP or folder.');
+ const worn=(row.previewModels||[]).filter(m=>!m.kind.startsWith('Inventory')),inventory=(row.previewModels||[]).filter(m=>m.kind.startsWith('Inventory'));
+ for(const m of worn){const file=findAsset(files,m.path);if(file)return {...parseNif(await file.arrayBuffer()),kind:m.kind,path:m.path};}
+ // Match the exact BodySlide output path declared in OSP; do not guess by names.
+ if(files.some(f=>/\.osp$/i.test(f.name))){
+  const index=await bodySlideIndex(files);
+  for(const m of worn){
+   const choices=index.get(meshKey(m.path))||[],unique=choices.filter((x,i)=>choices.findIndex(y=>y.file===x.file)===i);
+   if(unique.length>1)throw Error('Multiple BodySlide projects build this model. Load the intended project or built meshes.');
+   if(unique.length===1){const choice=unique[0],model=parseNif(await choice.file.arrayBuffer());
+    for(const shape of model.shapes)if(choice.bodyNames.has(shape.name))shape.body=true;
+    return {...model,kind:'BodySlide source preview (UNBUILT)',path:m.path,sourcePath:choice.sourcePath,unbuilt:true,project:choice.project};
+   }
+  }
+ }
+ for(const m of inventory){const file=findAsset(files,m.path);if(file)return {...parseNif(await file.arrayBuffer()),kind:m.kind,path:m.path};}
+ if(files.some(f=>/calientetools[\\/]bodyslide[\\/]shapedata/i.test(f.path||f.webkitRelativePath||'')))throw Error('Referenced in-game model is missing. This mod has BodySlide source meshes; load the built BodySlide output and installed outfit folder for previews.');
+ throw Error('Model not included. Load the full mod archive or folder.');
 }
 function dds(gl,buffer){
  const r=new Reader(buffer),v=r.v;if(v.getUint32(0,true)!==0x20534444)throw Error('Not a DDS texture');const h=v.getUint32(12,true),w=v.getUint32(16,true);if(w>16384||h>16384||!w||!h)throw Error('Unsupported DDS size');
@@ -113,6 +155,7 @@ async function viewer(canvas,model,files,onStatus=()=>{}){
  const uniforms={};for(const name of ['center','extent','aspect','angle','zoom','textured','cutout','color'])uniforms[name]=gl.getUniformLocation(program,name);
  const resources=[],messages=new Set(model.warnings),bodyMessages=new Set(),draws=[];let body=false,yaw=0,pitch=0,zoom=1.75,disposed=false;
  for(const shape of model.shapes){
+  if(shape.helper)continue;
   const n=shape.verts.length/5,normals=new Float32Array(n*3);
   for(let j=0;j<shape.indices.length;j+=3){const a=shape.indices[j],b=shape.indices[j+1],c=shape.indices[j+2],v=shape.verts;const x=[v[b*5]-v[a*5],v[b*5+1]-v[a*5+1],v[b*5+2]-v[a*5+2]],y=[v[c*5]-v[a*5],v[c*5+1]-v[a*5+1],v[c*5+2]-v[a*5+2]],cross=[x[1]*y[2]-x[2]*y[1],x[2]*y[0]-x[0]*y[2],x[0]*y[1]-x[1]*y[0]];for(const k of [a,b,c])for(let l=0;l<3;l++)normals[k*3+l]+=cross[l];}
   for(let i=0;i<n;i++){const length=Math.hypot(...normals.subarray(i*3,i*3+3))||1;for(let j=0;j<3;j++)normals[i*3+j]/=length;}

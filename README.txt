@@ -10,12 +10,13 @@ and a current Edge/Chrome browser with WebGL for model previews.
 
 The program opens in an Edge app window. If Edge is unavailable it opens
 in your default browser. It runs a local helper bound only to this computer.
-Use Exit application at the bottom, or Exit on its notification-area icon,
-to stop the helper. Closing only the browser window leaves the helper
-available from the notification-area icon.
+Closing the last tool window with X exits the helper after about two seconds.
+The short delay allows refreshes to reconnect. Minimizing keeps the app open.
+If several tool windows are open, the helper exits after the last one closes.
+Exit application and the notification-area Exit command remain available.
 
 USING IT
-Drop a mod ZIP, RAR, extracted mod folder or ESP/ESM/ESL.
+Drop a mod ZIP, RAR, 7z, extracted mod folder or ESP/ESM/ESL.
 For model previews, use the full mod with its NIF and DDS assets.
 Click a thumbnail to rotate and zoom.
 Check/uncheck individual keywords in the AND/SLA and Devious Devices lists.
@@ -56,9 +57,9 @@ Previews approximate lighting and alpha cutouts; no physics or game shaders.
 Missing/unsupported textures appear teal; do not use these to judge transparency.
 Embedded body geometry is hidden by default using mesh/texture-name hints.
 
-RAR uses Windows tar. No archive-controlled paths are extracted to disk;
+RAR and 7z use Windows tar. No archive-controlled paths are extracted to disk;
 only an input copy and intermediate ZIP are stored temporarily and removed.
-ZIP supports standard stored/deflated archives. BSA, 7z, encrypted archives,
+ZIP supports standard stored/deflated archives. BSA, encrypted archives,
 split archives and ZIP64 are unsupported. Extract them and select the folder.
 Limits: 1 GB archive, 256 MB per relevant file, 512 MB relevant files total,
 256 relevant files. Duplicate plugin/asset alternatives require choosing
@@ -86,3 +87,45 @@ a standard ZIP archive. The INI is at the archive root, with its original
 AND_<plugin stem>_KID.ini filename. It uses exactly the same selected tags
 and export-family switches as Save KID .ini. The original ESP and mod assets
 are not included. Both save buttons are disabled when no rules are selected.
+
+7z IMPORT UPDATE
+7z archives now open directly through the Windows app or local launcher.
+Tested with the supplied Evergloam UBE conversion patch: all three armor
+records loaded, and generated rules correctly target the original armor
+plugin. Conversion-only archives may contain BodySlide source meshes but
+not the built in-game NIFs or original textures. For final-shape previews, load the
+installed outfit assets and built BodySlide output. A matching BodySlide
+source can now provide a clearly labelled unbuilt preview.
+
+ARCHIVE FILENAME FIX
+Archive entries containing square brackets, such as [I] and [ELLE], now
+load correctly. These characters are handled as literal filename text.
+Verified with the Medusa UBE archive: all eight armor items import, its
+included earring model previews, and INI-as-ZIP export works.
+When a built model is missing, the tool can use a matching BodySlide source
+mesh through its OSP project. If no matching source exists, tagging remains
+available without a model preview.
+
+BODYSLIDE SOURCE PREVIEWS
+If the referenced worn model is not included, the tool now reads BodySlide
+OSP project metadata and matches the exact output path to its source NIF.
+This is a fallback, not a filename guess or an automatic BodySlide build.
+These thumbnails and the larger viewer are labelled UNBUILT. They display
+the base source geometry without your chosen preset, sliders, zap choices,
+physics or animation. Existing worn meshes still take priority.
+BodySlide reference bodies are hidden by default; virtual guide shapes are
+not rendered. These classifications are based on names and project metadata.
+Multiple source projects for the same output require choosing the intended
+project or providing built meshes. Sources need their OSP metadata to match.
+Checked all eight pieces in the Medusa archive: three existing in-game models
+and five BodySlide-source previews. Rotation, tags and ZIP export passed.
+
+WINDOW CLOSE UPDATE
+The Windows X now closes the application and its tray helper when the last
+tool window closes, with a brief two-second reload grace period.
+Tested refresh, minimize, closing one of two windows, last-window shutdown,
+request authentication, and close-before-registration timing.
+Before switching versions, exit any older tray copies using their Exit
+command. An older executable already running keeps its previous behavior.
+
+Each item has a Revealing checkbox that adds/removes EroticArmor for that item only, synchronized with the dropdown and editable field. Includes coverage guidance, button tooltips and a searchable tag reference. Coverage descriptions are qualitative; gameplay depends on consuming mods.

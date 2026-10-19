@@ -23,12 +23,24 @@ static class Program {
     static volatile bool Running = true;
     static int Port;
     static NotifyIcon Tray;
+    static readonly object WindowLock = new object();
+    static readonly HashSet<string> OpenWindows = new HashSet<string>();
+    static readonly HashSet<string> ClosedWindows = new HashSet<string>();
+    static DateTime? LastWindowClosed;
+    static System.Threading.Timer WindowTimer;
 
     [STAThread]
     static void Main(string[] args) {
         try {
             Listener = new TcpListener(IPAddress.Loopback, 0);
             Listener.Start(); Port = ((IPEndPoint)Listener.LocalEndpoint).Port;
+            WindowTimer = new System.Threading.Timer(delegate {
+                lock (WindowLock) {
+                    // Give reloads time to reconnect. Minimized windows remain registered.
+                    if (Running && OpenWindows.Count == 0 && LastWindowClosed.HasValue &&
+                        (DateTime.UtcNow - LastWindowClosed.Value).TotalSeconds >= 2) Stop();
+                }
+            }, null, 500, 500);
             if (args.Length == 2 && args[0] == "--serve-only") {
                 File.WriteAllText(args[1], Port.ToString());
                 Accept(); return;
@@ -44,12 +56,33 @@ static class Program {
         } catch (Exception e) {
             MessageBox.Show(e.Message, "KID Clothing Creator", MessageBoxButtons.OK, MessageBoxIcon.Error);
         } finally {
-            Running = false; if (Listener != null) Listener.Stop();
+            Running = false; if (WindowTimer != null) WindowTimer.Dispose(); if (Listener != null) Listener.Stop();
             if (Tray != null) { Tray.Visible = false; Tray.Dispose(); }
         }
     }
     static void Stop() {
         Running = false; Listener.Stop(); Application.Exit();
+    }
+    static string SmallBody(Dictionary<string, string> headers, Stream input) {
+        string text; int length;
+        if (!headers.TryGetValue("Content-Length", out text) || !int.TryParse(text, out length) || length < 1 || length > 256) throw new IOException("Invalid window lifecycle request");
+        var data = new byte[length]; int offset = 0;
+        while (offset < length) { int n = input.Read(data, offset, length - offset); if (n <= 0) throw new IOException("Incomplete window lifecycle request"); offset += n; }
+        return Encoding.UTF8.GetString(data);
+    }
+    static bool WindowId(string id) { Guid parsed; return Guid.TryParse(id, out parsed); }
+    static void RegisterWindow(string id) {
+        lock (WindowLock) {
+            // A close beacon can race ahead of the initial registration.
+            if (ClosedWindows.Contains(id)) return;
+            OpenWindows.Add(id); LastWindowClosed = null;
+        }
+    }
+    static void UnregisterWindow(string id) {
+        lock (WindowLock) {
+            ClosedWindows.Add(id); OpenWindows.Remove(id);
+            if (OpenWindows.Count == 0) LastWindowClosed = DateTime.UtcNow;
+        }
     }
     static void OpenWindow() {
         string url = "http://127.0.0.1:" + Port + "/";
@@ -102,14 +135,25 @@ static class Program {
                     Reply(stream, 200, resource.EndsWith("html") ? "text/html; charset=utf-8" : "text/javascript; charset=utf-8", Resource(resource)); return;
                 }
                 string token, origin;
-                if (method != "POST" || !headers.TryGetValue("X-KID-Token", out token) || token != Token ||
-                    (headers.TryGetValue("Origin", out origin) && origin != "http://127.0.0.1:" + Port)) { Reply(stream, 403, "text/plain", new byte[0]); return; }
+                if (method != "POST" || (headers.TryGetValue("Origin", out origin) && origin != "http://127.0.0.1:" + Port)) { Reply(stream, 403, "text/plain", new byte[0]); return; }
+                if (path == "/window-close") {
+                    // sendBeacon cannot set custom headers, so its short body carries the token.
+                    string[] notice = SmallBody(headers, stream).Split('\n');
+                    if (notice.Length != 2 || notice[0] != Token || !WindowId(notice[1])) { Reply(stream, 403, "text/plain", new byte[0]); return; }
+                    UnregisterWindow(notice[1]); Reply(stream, 204, "text/plain", new byte[0]); return;
+                }
+                if (!headers.TryGetValue("X-KID-Token", out token) || token != Token) { Reply(stream, 403, "text/plain", new byte[0]); return; }
+                if (path == "/window-open") {
+                    string id = SmallBody(headers, stream);
+                    if (!WindowId(id)) { Reply(stream, 400, "text/plain", new byte[0]); return; }
+                    RegisterWindow(id); Reply(stream, 204, "text/plain", new byte[0]); return;
+                }
                 if (path == "/stop") { Reply(stream, 204, "text/plain", new byte[0]); Stop(); return; }
-                if (path != "/rar") { Reply(stream, 404, "text/plain", new byte[0]); return; }
+                if (path != "/rar" && path != "/archive") { Reply(stream, 404, "text/plain", new byte[0]); return; }
                 long length; string lengthText;
                 if (!headers.TryGetValue("Content-Length", out lengthText) || !long.TryParse(lengthText, out length) || length <= 0 || length > 1024L * 1024 * 1024) throw new IOException("Archive must be smaller than 1 GB.");
                 if (!Conversion.Wait(0)) throw new IOException("Another archive is being opened. Try again after it finishes.");
-                string temp = Path.Combine(Path.GetTempPath(), "KIDCreator-" + Guid.NewGuid().ToString("N")), input = Path.Combine(temp, "input.rar"), output = Path.Combine(temp, "output.zip");
+                string temp = Path.Combine(Path.GetTempPath(), "KIDCreator-" + Guid.NewGuid().ToString("N")), input = Path.Combine(temp, "input.archive"), output = Path.Combine(temp, "output.zip");
                 Directory.CreateDirectory(temp);
                 try {
                     using (var file = File.Create(input)) {
@@ -147,21 +191,30 @@ static class Program {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, StandardOutputEncoding = Encoding.UTF8
         });
     }
+    static string ArchivePattern(string name) {
+        // bsdtar treats entry selectors as globs, including after --.
+        var escaped = new StringBuilder();
+        foreach (char c in name) {
+            if (c == '*' || c == '?' || c == '[' || c == ']' || c == '\\') escaped.Append('\\');
+            escaped.Append(c);
+        }
+        return escaped.ToString();
+    }
     static void ConvertRar(string source, string destination) {
         string listing;
         using (var p = Tar("-tf", source)) {
             var task = p.StandardOutput.ReadToEndAsync();
             if (!p.WaitForExit(45000)) { p.Kill(); throw new IOException("Archive listing timed out"); }
-            listing = task.Result; if (p.ExitCode != 0) throw new IOException("Cannot open this RAR. Use an unencrypted archive or extracted folder.");
+            listing = task.Result; if (p.ExitCode != 0) throw new IOException("Cannot open this archive. Use an unencrypted archive or extracted folder.");
         }
-        var extensions = new HashSet<string>(new[] { ".esp", ".esm", ".esl", ".nif", ".dds" });
+        var extensions = new HashSet<string>(new[] { ".esp", ".esm", ".esl", ".nif", ".dds", ".osp" });
         string[] names = listing.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(n => extensions.Contains(Path.GetExtension(n).ToLowerInvariant())).ToArray();
         if (names.Length > 256) throw new IOException("Archive contains more than 256 relevant files. Choose a smaller mod folder.");
         long total = 0;
         using (var file = File.Create(destination)) using (var zip = new ZipArchive(file, ZipArchiveMode.Create)) {
             foreach (string name in names) {
                 if (name.IndexOf('\0') >= 0 || name.IndexOf('\uFFFD') >= 0) throw new IOException("Unsupported archive filename encoding");
-                using (var p = Tar("-xOf", source, "--", name)) {
+                using (var p = Tar("-xOf", source, "--", ArchivePattern(name))) {
                     var entry = zip.CreateEntry(name.Replace('\\', '/'), CompressionLevel.NoCompression);
                     using (var target = entry.Open()) {
                         var task = Task.Factory.StartNew(delegate {
