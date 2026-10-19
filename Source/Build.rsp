@@ -1,0 +1,12 @@
+/nologo
+/target:winexe
+/platform:x64
+/optimize+
+/out:"KID Clothing Creator.exe"
+/reference:System.Windows.Forms.dll
+/reference:System.Drawing.dll
+/reference:System.IO.Compression.dll
+/resource:"Source\KID Creator.html",app.html
+/resource:Source\core.js,core.js
+/resource:Source\previews.js,previews.js
+Source\Program.cs
