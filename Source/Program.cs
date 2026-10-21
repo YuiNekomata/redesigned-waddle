@@ -160,9 +160,15 @@ static class Program {
                         var buffer = new byte[1024 * 1024]; long remaining = length;
                         while (remaining > 0) { int n = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining)); if (n <= 0) throw new IOException("Incomplete archive upload"); file.Write(buffer, 0, n); remaining -= n; }
                     }
-                    ConvertRar(input, output);
+                    bool skipped = false;
+                    try { ConvertRar(input, output); }
+                    catch (Exception error) {
+                        string reason = error.ToString();
+                        if (!reason.Contains("preview limit") && !reason.Contains("256 relevant files") && !reason.Contains("Cannot read archive entry:")) throw;
+                        ConvertRar(input, output, true); skipped = true;
+                    }
                     using (var file = File.OpenRead(output)) {
-                        byte[] response = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: " + file.Length + "\r\nConnection: close\r\n\r\n");
+                        byte[] response = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\n" + (skipped ? "X-KID-Preview-Skipped: 1\r\n" : "") + "Content-Length: " + file.Length + "\r\nConnection: close\r\n\r\n");
                         stream.Write(response, 0, response.Length); file.CopyTo(stream);
                     }
                 } finally {
@@ -200,7 +206,7 @@ static class Program {
         }
         return escaped.ToString();
     }
-    static void ConvertRar(string source, string destination) {
+    static void ConvertRar(string source, string destination, bool pluginsOnly = false) {
         string listing;
         using (var p = Tar("-tf", source)) {
             var task = p.StandardOutput.ReadToEndAsync();
@@ -208,6 +214,41 @@ static class Program {
             listing = task.Result; if (p.ExitCode != 0) throw new IOException("Cannot open this archive. Use an unencrypted archive or extracted folder.");
         }
         var extensions = new HashSet<string>(new[] { ".esp", ".esm", ".esl", ".nif", ".dds", ".osp" });
+        if (pluginsOnly) extensions = new HashSet<string>(new[] { ".esp", ".esm", ".esl" });
+        string[] names = listing.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(n => extensions.Contains(Path.GetExtension(n).ToLowerInvariant())).ToArray();
+        if (names.Length > 256) throw new IOException("Archive contains more than 256 relevant files. Choose a smaller mod folder.");
+        var args = new List<string>(new[] { "-cf", destination, "--format", "zip", "--options", "zip:compression=store" });
+        foreach (string extension in extensions) { args.Add("--include"); args.Add("*" + extension); }
+        args.Add("@" + source);
+        using (var process = Tar(args.ToArray())) {
+            var drain = process.StandardOutput.ReadToEndAsync();
+            var watch = Stopwatch.StartNew();
+            while (!process.WaitForExit(100)) {
+                if ((File.Exists(destination) && new FileInfo(destination).Length > MaxTotal + 1024 * 1024) || watch.ElapsedMilliseconds > 90000) {
+                    process.Kill(); process.WaitForExit();
+                    throw new IOException("Archive exceeds the preview limit or preview reading timed out");
+                }
+            }
+            drain.Wait();
+            if (process.ExitCode != 0) { ConvertRarCompatible(source, destination, pluginsOnly); return; }
+        }
+        using (var file = File.OpenRead(destination)) using (var zip = new ZipArchive(file, ZipArchiveMode.Read)) {
+            long total = 0;
+            foreach (var entry in zip.Entries) {
+                total += entry.Length;
+                if (entry.Length > MaxEntry || total > MaxTotal) throw new IOException("Archive exceeds the preview limit");
+            }
+        }
+    }
+    static void ConvertRarCompatible(string source, string destination, bool pluginsOnly = false) {
+        string listing;
+        using (var p = Tar("-tf", source)) {
+            var task = p.StandardOutput.ReadToEndAsync();
+            if (!p.WaitForExit(45000)) { p.Kill(); throw new IOException("Archive listing timed out"); }
+            listing = task.Result; if (p.ExitCode != 0) throw new IOException("Cannot open this archive. Use an unencrypted archive or extracted folder.");
+        }
+        var extensions = new HashSet<string>(new[] { ".esp", ".esm", ".esl", ".nif", ".dds", ".osp" });
+        if (pluginsOnly) extensions = new HashSet<string>(new[] { ".esp", ".esm", ".esl" });
         string[] names = listing.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Where(n => extensions.Contains(Path.GetExtension(n).ToLowerInvariant())).ToArray();
         if (names.Length > 256) throw new IOException("Archive contains more than 256 relevant files. Choose a smaller mod folder.");
         long total = 0;

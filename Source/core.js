@@ -268,7 +268,8 @@ function applySlotSuggestions(plugin){
  for(const row of plugin.rows){
   const profile=suggestSlots(row);
   if(profile==='Review / no tags')continue;
-  const added=profiles[profile].filter(t=>!row.tags.includes(t));
+  const suggested=row.slots.includes(32)?[...profiles[profile],'EroticArmor']:profiles[profile];
+  const added=suggested.filter(t=>!row.tags.includes(t));
   if(!added.length)continue;
   row.tags=[...new Set([...row.tags,...added])];row.slotSuggestedTags=[...new Set([...(row.slotSuggestedTags||[]),...added])];row.slotGuess=true;changed++;
  }

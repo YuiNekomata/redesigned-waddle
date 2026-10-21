@@ -129,3 +129,11 @@ Before switching versions, exit any older tray copies using their Exit
 command. An older executable already running keeps its previous behavior.
 
 Each item has a Revealing checkbox that adds/removes EroticArmor for that item only, synchronized with the dropdown and editable field. Includes coverage guidance, button tooltips and a searchable tag reference. Coverage descriptions are qualitative; gameplay depends on consuming mods.
+
+Large archives: if preview extraction exceeds 256 MB per file, 512 MB total, or 256 relevant entries, the tool retries plugins only so keyword tagging remains available. Preview assets are omitted with a status notice; use an extracted folder for previews. Plugin and archive limits still apply.
+
+Suggest semi-lewd tags adds both SLA_ArmorHalfNaked and EroticArmor to slot 32 items. Other slot suggestions and existing tags are preserved.
+
+Archive reader now converts selected contents in a single pass for faster solid archive loading. Large preview assets fall back to plugin-only loading. Corrected UI text encoding.
+
+RAR compatibility: retries individual entries if bulk conversion fails. An unreadable preview entry falls back to plugin-only tagging. Tested Swan archive: 12 armor items.
